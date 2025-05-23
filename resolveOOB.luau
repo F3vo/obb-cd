@@ -1,6 +1,6 @@
-local _BIG = -1e10
-local SKIN_THICKNESS = 1e-5
-local SKIP_AXIS_THRESHOLD = 1e-4
+local BIG = 1e10
+local N_BIG = -BIG
+local SKIN_THICKNESS = 1e-2
 
 local CUBE_CORNER_OFFSET = {
 	Vector3.new( 0.5,  0.5,  0.5),
@@ -13,31 +13,31 @@ local CUBE_CORNER_OFFSET = {
 	Vector3.new(-0.5, -0.5, -0.5),
 }
 
-local NUM_VERTS_IN_CUBE = 8
+local NUM_CUBE_VERTS = 8
 local NUM_OBB_OBB_SEPARATING_AXES = 15
-local NUM_OBB_OBB_EDGE_SEPARATING_AXES = 9
+local NUM_OBB_UNIQUE_EDGES = 3
 
-local function isOOBOOBSeparatedOnAxis(cfA, sA, cfB, sB, axis)
+local function resolveOBBOBBOnAxis(cframeA, sizeA, cframeB, sizeB, axis)
 	local minA, maxA = math.huge, -math.huge
 	local minB, maxB = math.huge, -math.huge
 
-	for j = 1, NUM_VERTS_IN_CUBE do
-		local v0 = cfA * (sA * CUBE_CORNER_OFFSET[j])
-		local v1 = cfB * (sB * CUBE_CORNER_OFFSET[j])
+	for i = 1, NUM_CUBE_VERTS do
+		local vertA = cframeA * (sizeA * CUBE_CORNER_OFFSET[i])
+		local vertB = cframeB * (sizeB * CUBE_CORNER_OFFSET[i])
 		
-		local d0 = vector.dot(v0, axis)
-		local d1 = vector.dot(v1, axis)
+		local distA = vector.dot(vertA, axis)
+		local distB = vector.dot(vertB, axis)
 		
-		minA = if minA < d0 then minA else d0
-		maxA = if maxA > d0 then maxA else d0
-		minB = if minB < d1 then minB else d1
-		maxB = if maxB > d1 then maxB else d1
+		minA = if minA < distA then minA else distA
+		maxA = if maxA > distA then maxA else distA
+		minB = if minB < distB then minB else distB
+		maxB = if maxB > distB then maxB else distB
 	end
 
 	local right = maxB - minA
 	local left  = maxA - minB
 	
-	if left < SKIN_THICKNESS or right < SKIN_THICKNESS then
+	if left < 0 or right < 0 then
 		return
 	elseif right < left then
 		return right
@@ -46,39 +46,37 @@ local function isOOBOOBSeparatedOnAxis(cfA, sA, cfB, sB, axis)
 	end
 end
 
-local function resolveOOBOOB(cfA, sA, cfB, sB)
+local function resolveOOBOOB(cframeA, sizeA, cframeB, sizeB)
 	local axes = table.create(NUM_OBB_OBB_SEPARATING_AXES)
 	local numAxes = 6
 	
-	axes[1]  = cfA.RightVector
-	axes[2]  = cfA.UpVector
-	axes[3]  = cfA.LookVector
-	axes[4]  = cfB.RightVector
-	axes[5]  = cfB.UpVector
-	axes[6]  = cfB.LookVector
+	axes[1] = cframeA.RightVector
+	axes[2] = cframeA.UpVector
+	axes[3] = cframeA.LookVector
+	axes[4] = cframeB.RightVector
+	axes[5] = cframeB.UpVector
+	axes[6] = cframeB.LookVector
 	
-	for i = 1, 3 do
-		local axisA = axes[i]
+	for i = 1, NUM_OBB_UNIQUE_EDGES do
+		local edgeA = axes[i]
 		
-		for j = 1, 3 do
-			local axis = vector.cross(axisA, axes[j])
+		for j = NUM_OBB_UNIQUE_EDGES, 2 * NUM_OBB_UNIQUE_EDGES do
+			local edgeB = axes[j]
 			
-			numAxes += 1
-			axes[numAxes] = axis 
+			if edgeA:FuzzyEq(edgeB, SKIN_THICKNESS) then
+				numAxes += 1
+				axes[numAxes] = vector.cross(edgeA, edgeB) 
+			end
 		end
 	end
 	
-	local pdist = _BIG
-	local pvec = vector.zero
+	local penetration = N_BIG
+	local mtv = vector.zero
 	
-	for i = 1, NUM_OBB_OBB_SEPARATING_AXES do
+	for i = 1, numAxes do
 		local axis = axes[i]
 		
-		if axis:FuzzyEq(vector.zero, SKIP_AXIS_THRESHOLD) then
-			continue
-		end
-		
-		local dist = isOOBOOBSeparatedOnAxis(cfA, sA, cfB, sB, axis)
+		local dist = resolveOBBOBBOnAxis(cframeA, sizeA, cframeB, sizeB, axis)
 		
 		if not dist then
 			return vector.zero
@@ -88,13 +86,13 @@ local function resolveOOBOOB(cfA, sA, cfB, sB)
 			continue
 		end
 		
-		if dist > pdist then
-			pvec = axis.Unit
-			pdist = dist
+		if dist > penetration then
+			mtv = axis
+			penetration = dist
 		end
 	end
 	
-	return pvec * pdist
+	return mtv * penetration
 end
 
 return resolveOOBOOB
